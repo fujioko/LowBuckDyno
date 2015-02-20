@@ -1,0 +1,194 @@
+// code for Arduino UNO
+//also works on Mega2560
+//uploaded to mega 12-25-14
+// 
+// modified 1-11-15 for RS232. works!
+// modified 1-17-15 for data output. works!
+// modified 1-17-15 automatic control lock out switch. works!
+// modified 1-18-15 for switch state. works!
+// modified 1-18-15 for PC control of throttle. works!
+// modified 1-18-15 for PC control of load valve. works!
+// modified 1-29-15 disable com switch works!
+// modified 2-01-15 disable throttle controller when disable com switch is enabled. works!
+// modified 2-01-15 electronic emergency stop. works!
+//          Serial
+int ch=0;
+int cnt=0;  //remove
+
+//                 servo throttle
+int throttlePulse = 11; // throttle controller pulse
+int throttleDir = 12; // throttle controller direction
+int throttleEnbl = 13; // throttle controller enable
+int difference = 0;  // throttle math
+int idle = 0;        //throttle math
+int PCThrottle=0;           //PC throttle percent open 1-18-15
+
+//                servo load valve
+float PCValvecommandVoltage=1.95; // value is curently as far as the valve will open //1-18-15
+int valvePulse = 8; // valve controller pulse
+int valveDir = 9; // valve controller direction
+int valveEnbl = 10; //valve controller enable
+float deadZone = .08; // null zone to keep valve servo from twitching
+
+boolean  SwitchStatus1 = false; //'"off";
+boolean  SwitchStatus2 = false; //'"off"; 1-29-15
+int Estop = 7; //digital pin 7
+int EmergencyStop=0;
+
+// the setup routine runs once when you press reset:
+void setup() {                
+ //     servo throttle
+  pinMode(throttlePulse, OUTPUT);  
+  pinMode (throttleDir, OUTPUT);
+  pinMode (throttleEnbl, OUTPUT);
+  
+//     servo load valve  
+  pinMode(valvePulse, OUTPUT);  
+  pinMode (valveDir, OUTPUT);
+  pinMode (valveEnbl, OUTPUT);
+  
+  //     switch
+   pinMode(6, INPUT_PULLUP);// test enable switch
+   pinMode(5, INPUT_PULLUP);// disable com 1-29-15
+   pinMode (Estop, OUTPUT); // estop relay 1-29-15
+Serial1.begin(19200); 
+  delay(2);
+ 
+  digitalWrite (throttleEnbl, HIGH); // disables throttle so spring can return to idle stop before servo control begins
+  delay (1000); // gives throttle spring ample time to return throttle to idle stop
+  digitalWrite (throttleEnbl, LOW); // enables throttle servo.  this is ouside the main loop for future e-stop commands
+  }
+
+// the loop routine runs over and over again forever:
+void loop() {
+  
+//  automatic control lockout hard wired to digital port 6
+//  port is pulled up, so if switch is missing, nothing will happen
+int AutoSwitch = digitalRead(6);// reads digital port 6
+int OffLineSwitch = digitalRead(5);// reads digital port 5
+ // end automatic control lockout 
+  
+ 
+ 
+ 
+ //              Servo throttle command value
+  
+ int throttleCommandValue = analogRead(A4);
+ // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V):
+ float throttleVoltage = throttleCommandValue * (10.23 / 1023.0);
+ int percentCommand= throttleVoltage*100; //converts voltage into percent
+ if (AutoSwitch == LOW){percentCommand=PCThrottle;} // throttle gets its command from PC 1-18-15
+ 
+ //             End servo throttle command value
+  
+ 
+ 
+ //             servo load valve
+ int valvecommandSensorValue1 = analogRead(A0); //reads manual control knob
+ int valvefeedbackSensorValue2 = analogRead(A1);// reads position feedback
+  float valvecommandVoltage1 = valvecommandSensorValue1 * (5.0 / 1023.0);
+     if (valvecommandVoltage1 > 2.0) {valvecommandVoltage1=2.00;} // this keeps valve from jaming open 1-17-15
+ float valvefeedbackVoltage2 = valvefeedbackSensorValue2 * (5.0 / 1023.0);
+     if (AutoSwitch == LOW){valvecommandVoltage1=PCValvecommandVoltage;}// valve get its command from PC 1-18-15
+  
+ 
+//--- take throttle stepper controler offline when switch it fliped--             
+if (OffLineSwitch == LOW){digitalWrite (throttleEnbl, HIGH);}
+  else{digitalWrite (throttleEnbl, LOW);}
+//-------------  END offline switch function--------------------------
+
+//             begin throttle servo code
+ // throttle command greater than
+ 
+ if (percentCommand > idle ){digitalWrite (throttleDir, LOW);
+
+   int difference = (percentCommand - idle);
+     for (int i = 0 ; i < difference; i++)
+ {     idle = idle +1;
+         digitalWrite(throttlePulse, HIGH);                
+         digitalWrite(throttlePulse, LOW);
+                delay (1);
+ }
+ }
+ 
+ // throttle command less than
+ if  (percentCommand < idle ){digitalWrite (throttleDir, HIGH); 
+   int difference = (idle - percentCommand );
+     for (int i = 0 ; i < difference; i++)
+ {     idle = idle -1;
+         digitalWrite(throttlePulse, HIGH);                
+         digitalWrite(throttlePulse, LOW);
+                 delay (1);
+} 
+}//             end servo throttle code
+
+
+ 
+//                 begine servo load valve 
+ 
+ if (valvefeedbackVoltage2 > valvecommandVoltage1-deadZone && valvefeedbackVoltage2 < valvecommandVoltage1+deadZone)
+   {    digitalWrite (valveEnbl,HIGH);} // when this condition is met the controler is disabled
+   else
+   {digitalWrite (valveEnbl, LOW);} //controler is enabled
+
+
+// determins what direction the valve stepper should spin
+if (valvefeedbackVoltage2 >= valvecommandVoltage1){ digitalWrite (valveDir, LOW);}
+ if (valvefeedbackVoltage2 <= valvecommandVoltage1){ digitalWrite (valveDir, HIGH);}
+ 
+ // the valve motor pulse commandes.  
+  
+   for (int i = 0; i <8; i++) //  this loops valve motor 8X to push feeback pot into deadzone to stop twitching
+   {
+      digitalWrite(valvePulse, HIGH); 
+       digitalWrite(valvePulse, LOW);
+        delay(1); 
+ 
+   }//         tln(weight); // 
+  
+ if (AutoSwitch == HIGH) {
+     SwitchStatus1=false;}
+     else{ SwitchStatus1=true;}
+     
+ if  (OffLineSwitch==HIGH){   //---1-29-15
+       SwitchStatus2=false;}
+       else{SwitchStatus2=true;}
+ 
+ //            serial begin
+  while (Serial1.available() > 0) {
+    ch=Serial1.read();
+         if (ch=='J') { 
+          
+    Serial1.println("BUTTHEAD");
+    Serial1.println(idle); //1-17-15
+    Serial1.println(percentCommand); // 1-17-15
+    Serial1.println(valvecommandVoltage1); //1-17-15
+    Serial1.println(valvefeedbackVoltage2);// 1-17-15
+    Serial1.println (SwitchStatus1);    //1-18-2015
+    Serial1.println (SwitchStatus2);   //1-29-15
+    Serial1.println (PCThrottle);  //1-18-15
+    Serial1.println (PCValvecommandVoltage);
+    
+    //    PC control of throttle and valve data
+    PCThrottle=Serial1.parseInt ();  //1-18-15
+    PCValvecommandVoltage=Serial1.parseFloat ();  //1-18-15
+    EmergencyStop=Serial1.parseInt ();
+    //    end PC control data
+   }  
+   }
+  //               serial end  
+  
+ 
+ if (EmergencyStop > 1){digitalWrite(Estop, HIGH); }// shut that motherfucker down.  No recovery.  User must reset power to clear.
+ 
+ 
+ 
+ }// main loop
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
