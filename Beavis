@@ -1,0 +1,169 @@
+// January 09 2015
+// this series of code is for Mega on RS232 and different
+// polling command
+// modified 1-26-15 for RPM averaging.
+// modified 1-26-15 with new math for prescale JFM and RPM calculation
+// modified 2-01-15 for trq averaging.
+
+#include <avr/interrupt.h>
+#include <stdio.h>
+#include <string.h>
+unsigned int int1;
+volatile unsigned int ovrcnt,capnew,capold,result,dif;
+int itrq,irpm,cnt;
+int RPMcnt;
+int TQcnt;
+unsigned char flag,len,ch,cs;
+float count,rpm,trq, AvRPM,RPMavg,AvTQ,TQavg;
+//---------------------
+
+void setup() {
+//Setup TC5 for capture and overflow count
+  TCCR5A=0X00;  //normal mode
+  //TCCR5B=0XC2;  //noise filter on, capture pos edge, prescale=/8 old
+  TCCR5B=0XC3;  //noise filter on, capture pos edge, prescale=/64  NEW 1-26-15
+  TIFR5=0X00;   //reset all int flags
+  TIMSK5=0X21;  //set capture, overflow int flags
+  // end of TC5 setup 
+  ovrcnt=0x00;  //zero over flow counter
+  flag=0x00;
+  capnew=0x00;
+  capold=0x00;
+  rpm=0.0;
+
+
+Serial1.begin(19200); //works
+  delay(2);
+
+  
+}
+
+void loop() {
+  
+ //          begin loadcell read and convert 
+  int loadcell = analogRead(A2);
+  float loadcellvoltage = loadcell * (5.0 / 1023.0);
+  float weight = (224/5) * loadcellvoltage;// load cell full scale = 1kN @ 5v.  1 nN =224 pounds
+  float trq = (weight*.86); // the load arm is 14 inches not 12.  Foot lbs is 85.7% of actual value.
+  itrq=trq;
+  //              end loadcell read 
+   
+   if(flag==0x01)
+  {
+   if (result==0)
+    {
+      rpm=0;
+    }
+  else
+     {
+        count=result;
+        //rpm=(1/count)*6.0e7; //old
+        rpm=(1/count)*7.5e6;  // NEW 1-26-15
+        // vss = 4.108 pulses per rpm
+        //time=count*5e-7, freq=1/time, (freq/4.108)*60=RPM
+        //where 5e-7 is one counter time tick (0.5uS)
+        //      freq is in pulses per sec
+        //      time is in seconds
+        //      16 pulses per rev is assumed
+        //      RPM=60*RPS (rounds per second)
+        //This all reduces to the formula above for rpm
+     }
+   flag=0x00;
+  }
+  
+  //-----------------------RPM Average--------------------------
+  AvRPM= (AvRPM + rpm);
+  RPMcnt++;
+  if (RPMcnt >=20)
+  {
+    RPMcnt=0;
+    RPMavg=(AvRPM/20);
+    AvRPM=0;
+        
+  }
+    
+  
+   AvTQ= (AvTQ + trq);
+  TQcnt++;
+  if (TQcnt >=20)
+  {
+    TQcnt=0;
+    TQavg=(AvTQ/20);
+    AvTQ=0;
+        
+  }
+      
+    while (Serial1.available() > 0) {
+    ch=Serial1.read();
+         if (ch=='K') { 
+           cnt = cnt +1;
+  
+  
+  Serial1.println("BEAVIS");
+  Serial1.println(cnt);
+  Serial1.println(TQavg);
+  //Serial1.println(trq);
+  //Serial1.println(rpm);
+   Serial1.println(RPMavg);
+  
+             
+  
+}
+}
+}
+  
+  
+  
+  
+ //This code counts the number of times the capture counter overflows.
+//If the new value is smaller than the old value in capture, then
+//the overflow count should be 1.  It should be 0 otherwise.  If the 
+//data display or send routine is slow, then the program will miss
+//calculating capture values and the overflow count will be > 1, indicating
+//that a calculation has been lost.
+ISR(TIMER5_OVF_vect)
+{
+  ovrcnt++;
+}
+
+//This is the capture code.  It captures the value of TIMER5 when ever
+//there is a positive edge on the ICP5 input.  The difference between 
+//two captures measures the time between edges and a 1/T calculation
+//gives frequency which may be converted to RPM.
+ISR(TIMER5_CAPT_vect)
+{
+  unsigned char srg;
+  capnew=ICR5;
+  if(flag==0x00)
+  {
+   dif=capnew-capold;
+   srg=SREG;
+   //The following criteria assures that if the display routine is too
+   //slow, a result is not calculated and subsequent calculations will
+   //be correct.  See overflow count interrupt.  The "0" bit of SREG
+   //is the overflow bit, used here with ovrcnt to check for a good 
+   //capture.
+   //over count also happens when the input frequency is too low.  That
+   //is why the routine returns result=0 if overcount happens.
+   if((((srg & 0x01)==0x00) && (ovrcnt==0x00)) || (((srg & 0x01)==0x01) && (ovrcnt==0x01)))
+     {
+       result=dif;
+       flag=0x01;
+     //  capsav1=capold;
+     //  capsav2=capnew;
+     //  ovrsav=ovrcnt;
+      }
+   else
+     {
+       //error++;
+       result=0;
+       flag=0x01;
+     }
+    }
+  capold=capnew;
+  ovrcnt=0x00;
+}
+  
+ 
+  
+
